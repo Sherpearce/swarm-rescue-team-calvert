@@ -36,7 +36,7 @@ class GuiSR(TopDownView):
             draw_transparent: bool = False,
             draw_interactive: bool = False,
             draw_zone: bool = True,
-            draw_lidar_rays: bool = False,
+            draw_lidar_rays: bool = True,
             draw_semantic_rays: bool = False,
             draw_gps: bool = False,
             draw_com: bool = False,
