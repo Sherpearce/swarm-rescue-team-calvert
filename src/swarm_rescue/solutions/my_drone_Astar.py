@@ -13,6 +13,10 @@ from enum import Enum
 import numpy as np
 from spg.utils.definitions import CollisionTypes
 
+import networkx as nx
+from scipy.spatial.distance import euclidean
+from heapq import heappop, heappush
+
 # This line add, to sys.path, the path to parent path of this file
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -66,6 +70,9 @@ class MyDroneAstar(DroneAbstract):
                                   resolution=resolution,
                                   lidar=self.lidar())
 
+        self.astarPathFound = False
+        self.astarPath = []
+
     def define_message_for_all(self):
         """
         Here, we don't need communication...
@@ -81,7 +88,7 @@ class MyDroneAstar(DroneAbstract):
         print(self.estimated_pose.orientation)
 
         self.occupancyGrid.update_grid(pose=self.estimated_pose)
-        print(self.occupancyGrid.grid)
+        #print(self.occupancyGrid.grid)
 
         self.getImbalanceList()
         if max(self.imbalanceList) > 30:
@@ -153,10 +160,23 @@ class MyDroneAstar(DroneAbstract):
             #command["forward"] = command["forward"] * 0.75 - components[0] / 4
             #command["lateral"] = command["lateral"] * 0.75 - components[1] / 4
             #command["rotation"] = command["rotation"] * 0.75 + turningComponent * 0.25
-            while abs(path[-1][0] - self.estimated_pose.position[0]) < 40 and abs(path[-1][1] - self.estimated_pose.position[1]) < 40:
-                path.pop(-1) 
-            command = self.goToPlace(path[-1])
+            if not self.astarPathFound:
+                self.astarPathFound
+                self.astarGrid = (self.occupancyGrid.grid < 10)
+                G = nx.grid_2d_graph(*self.astarGrid.shape)
+                start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
+                goal = self.occupancyGrid._conv_world_to_grid(int(path[0][0]), int(path[0][1]))
+
+                self.astarPath = astar(G, start, goal)
+                for i in range(len(self.astarPath)):
+                    self.astarPath[i] = self.occupancyGrid._conv_grid_to_world(self.astarPath[i][0], self.astarPath[i][1])
+            while abs(self.astarPath[-1][0] - self.estimated_pose.position[0]) < 40 and abs(self.astarPath[-1][1] - self.estimated_pose.position[1]) < 40:
+                self.astarPath.pop(-1) 
+            command = self.goToPlace(self.astarPath[-1])
             command["grasper"] = 1
+            return command
+
+
             return command
 
         elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
@@ -368,6 +388,43 @@ def calculate_movement_components(rayNumber):
     lateral = math.sin(angle_radians)
 
     return forward, lateral
+
+def astar(graph, start, goal):
+    def heuristic(node, goal):
+        return euclidean(node, goal)
+
+    open_set = [(0, start)]
+    came_from = {}
+    cost_so_far = {start: 0}
+
+    while open_set:
+        current_cost, current_node = heappop(open_set)
+
+        if current_node == goal:
+            path = reconstruct_path(came_from, start, goal)
+            return path
+
+        for neighbor in graph.neighbors(current_node):
+            new_cost = cost_so_far[current_node] + 1  # Assuming each edge has a cost of 1
+
+            if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+                cost_so_far[neighbor] = new_cost
+                priority = new_cost + heuristic(neighbor, goal)
+                heappush(open_set, (priority, neighbor))
+                came_from[neighbor] = current_node
+
+    return None
+
+def reconstruct_path(came_from, start, goal):
+    current = goal
+    path = [current]
+
+    while current != start:
+        current = came_from[current]
+        path.append(current)
+
+    return path[::-1]
+
 
 
 
