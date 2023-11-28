@@ -20,6 +20,13 @@ from spg_overlay.gui_map.gui_sr import GuiSR
 from spg_overlay.gui_map.map_abstract import MapAbstract
 from spg_overlay.utils.misc_data import MiscData
 
+from spg_overlay.utils.pose import Pose
+import numpy as np  
+minimum = 0
+maximum = 0
+
+xmin, xmax = 0,0
+ymin, ymax = 0,0
 
 class MyDroneKeyboard(DroneAbstract):
     def __init__(self, **kwargs):
@@ -32,6 +39,22 @@ class MyDroneKeyboard(DroneAbstract):
         pass
 
     def control(self):
+            
+        global minimum, maximum, xmin, xmax, ymin, ymax
+        self.estimated_pose = Pose(np.asarray(self.measured_gps_position()), self.measured_compass_angle())
+        minimum = min(minimum, self.estimated_pose.orientation)
+        maximum = max(maximum, self.estimated_pose.orientation)
+        xmin = min(xmin, self.estimated_pose.position[0])
+        xmax = max(xmax, self.estimated_pose.position[0])
+
+
+        ymin = min(ymin, self.estimated_pose.position[1])
+        ymax = max(ymax, self.estimated_pose.position[1])
+        print(minimum, "+", maximum)
+        print(xmin, "and ", xmax)
+        print(ymin, "also", ymax)
+        print(self.estimated_pose.position)
+        print(self.estimated_pose.orientation)
         command = {"forward": 0.0,
                    "lateral": 0.0,
                    "rotation": 0.0,
