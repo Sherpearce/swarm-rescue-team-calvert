@@ -1,5 +1,5 @@
-from solutions.my_drone_focus_and_avoid import MyDroneFocusAndAvoid
+from solutions.my_drone_Astar import MyDroneAstar
 
 
-class MyDroneEval(MyDroneFocusAndAvoid):
+class MyDroneEval(MyDroneAstar):
     pass
