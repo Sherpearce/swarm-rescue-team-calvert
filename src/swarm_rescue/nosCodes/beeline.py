@@ -1,6 +1,8 @@
 import gc
 from typing import Tuple
 
+import sys
+sys.path.append("../")
 
 from spg_overlay.entities.sensor_disablers import ZoneType
 from spg_overlay.utils.constants import DRONE_INITIAL_HEALTH
@@ -10,8 +12,6 @@ from spg_overlay.reporting.data_saver import DataSaver
 from spg_overlay.reporting.screen_recorder import ScreenRecorder
 from spg_overlay.reporting.team_info import TeamInfo
 from spg_overlay.gui_map.gui_sr import GuiSR
-
-from maps.mapWithoutWalls import MapWithoutWalls
 
 from maps.map_intermediate_01 import MyMapIntermediate01
 from maps.map_intermediate_02 import MyMapIntermediate02
@@ -57,28 +57,23 @@ class Launcher:
         self.team_info = TeamInfo()
         self.eval_plan = EvalPlan()
 
-        #eval_config = EvalConfig(map_type=MapWithoutWalls, nb_rounds=2)
-        #self.eval_plan.add(eval_config=eval_config)
-
-        #eval_config = EvalConfig(map_type=MyMapIntermediate01, nb_rounds=2)
-        #self.eval_plan.add(eval_config=eval_config)
+        eval_config = EvalConfig(map_type=MyMapIntermediate01, nb_rounds=2)
+        self.eval_plan.add(eval_config=eval_config)
 
         eval_config = EvalConfig(map_type=MyMapIntermediate02)
         self.eval_plan.add(eval_config=eval_config)
 
-        #zones_config: ZonesConfig = ()
-        #eval_config = EvalConfig(map_type=MyMapMedium01, zones_config=zones_config, nb_rounds=1, config_weight=1)
-        #self.eval_plan.add(eval_config=eval_config)
+        zones_config: ZonesConfig = ()
+        eval_config = EvalConfig(map_type=MyMapMedium01, zones_config=zones_config, nb_rounds=1, config_weight=1)
+        self.eval_plan.add(eval_config=eval_config)
 
-        #zones_config: ZonesConfig = (ZoneType.NO_COM_ZONE, ZoneType.NO_GPS_ZONE, ZoneType.KILL_ZONE)
-        #eval_config = EvalConfig(map_type=MyMapMedium01, zones_config=zones_config, nb_rounds=1, config_weight=1)
-        #self.eval_plan.add(eval_config=eval_config)
+        zones_config: ZonesConfig = (ZoneType.NO_COM_ZONE, ZoneType.NO_GPS_ZONE, ZoneType.KILL_ZONE)
+        eval_config = EvalConfig(map_type=MyMapMedium01, zones_config=zones_config, nb_rounds=1, config_weight=1)
+        self.eval_plan.add(eval_config=eval_config)
 
-        #zones_config: ZonesConfig = (ZoneType.NO_COM_ZONE, ZoneType.NO_GPS_ZONE, ZoneType.KILL_ZONE)
-        #eval_config = EvalConfig(map_type=MyMapMedium02, zones_config=zones_config, nb_rounds=1, config_weight=1)
-        #self.eval_plan.add(eval_config=eval_config)
-
-
+        zones_config: ZonesConfig = (ZoneType.NO_COM_ZONE, ZoneType.NO_GPS_ZONE, ZoneType.KILL_ZONE)
+        eval_config = EvalConfig(map_type=MyMapMedium02, zones_config=zones_config, nb_rounds=1, config_weight=1)
+        self.eval_plan.add(eval_config=eval_config)
 
         self.number_drones = None
         self.time_step_limit = None
