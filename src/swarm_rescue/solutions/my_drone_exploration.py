@@ -83,7 +83,7 @@ class OccupancyGrid(Grid):
         max_range = MAX_RANGE_LIDAR_SENSOR * 0.9
 
         # For empty zones
-        # points_x and point_y contains the border of detected empty zone
+        # points_x and point_y contain the border of detected empty zone
         # We use a value a little bit less than LIDAR_DIST_CLIP because of the noise in lidar
         lidar_dist_empty = np.maximum(lidar_dist - LIDAR_DIST_CLIP, 0.0)
         # All values of lidar_dist_empty_clip are now <= max_range
@@ -110,6 +110,9 @@ class OccupancyGrid(Grid):
 
         # threshold values
         self.grid = np.clip(self.grid, THRESHOLD_MIN, THRESHOLD_MAX)
+
+        # Ensure positive values stay positive
+        self.grid[self.grid > 0] = THRESHOLD_MAX  # Set positive values to the maximum threshold
 
         # compute zoomed grid for displaying
         self.zoomed_grid = self.grid.copy()
@@ -227,7 +230,8 @@ class MyDroneExplore(DroneAbstract):
         ##########
 
         if counter % 5 == 0:
-            self.occupancyGrid.display(self.occupancyGrid.grid, self.estimated_pose, title="occupancy grid")
+            #self.occupancyGrid.display(self.occupancyGrid.grid, self.estimated_pose, title="occupancy grid")
+            self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
         
         if self.state is self.Activity.SEARCHING_WOUNDED:
             command = self.control_random()
