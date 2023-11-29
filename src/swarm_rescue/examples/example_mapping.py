@@ -26,7 +26,7 @@ from spg_overlay.entities.rescue_center import RescueCenter, wounded_rescue_cent
 from spg_overlay.gui_map.closed_playground import ClosedPlayground
 from spg_overlay.gui_map.gui_sr import GuiSR
 from spg_overlay.gui_map.map_abstract import MapAbstract
-
+np.set_printoptions(threshold=sys.maxsize)
 
 class OccupancyGrid(Grid):
     """Simple occupancy grid"""
@@ -129,6 +129,8 @@ class MyDroneMapping(DroneAbstract):
         """
         We only send a command to do nothing
         """
+        x,y = self.grid._conv_world_to_grid(400, -250)
+        print(self.grid.grid[x][y])
         command = {"forward": 0.0,
                    "lateral": 0.0,
                    "rotation": 0.0,

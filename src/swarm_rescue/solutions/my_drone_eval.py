@@ -1,5 +1,5 @@
-from solutions.my_drone_Astar import MyDroneAstar
+from solutions.my_drone_exploration import MyDroneExplore
 
 
-class MyDroneEval(MyDroneAstar):
+class MyDroneEval(MyDroneExplore):
     pass

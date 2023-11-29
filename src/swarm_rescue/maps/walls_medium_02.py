@@ -193,7 +193,7 @@ def add_walls(playground):
 
     # horizontal wall 33
     wall = NormalWall(pos_start=(-130, -107),
-                      pos_end=(198, -107))
+                      pos_end=(240, -107))
     playground.add(wall, wall.wall_coordinates)
 
     # horizontal wall 34
