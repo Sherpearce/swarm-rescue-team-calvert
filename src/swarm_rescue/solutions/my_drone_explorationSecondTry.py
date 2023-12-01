@@ -2,19 +2,13 @@
 This program can be launched directly.
 Example of how to use semantic sensor, grasping and dropping
 """
-import time
+
 import os
 import sys
 import random
 import math
 from typing import Optional, List, Type
 from enum import Enum
-
-from queue import PriorityQueue
-
-from queue import Queue
-from collections import defaultdict
-
 
 import numpy as np
 from spg.utils.definitions import CollisionTypes
@@ -36,14 +30,11 @@ from spg_overlay.gui_map.map_abstract import MapAbstract
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, circular_mean
 from spg_overlay.utils.pose import Pose
-
 from spg_overlay.utils.grid import Grid
 from spg_overlay.utils.constants import MAX_RANGE_LIDAR_SENSOR
 
 import cv2
 
-counter = 0
-path = []
 
 class OccupancyGrid(Grid):
     """Simple occupancy grid"""
@@ -76,7 +67,7 @@ class OccupancyGrid(Grid):
         EMPTY_ZONE_VALUE = -0.602
         OBSTACLE_ZONE_VALUE = 2.0
         FREE_ZONE_VALUE = -4.0
-        THRESHOLD_MIN = -40
+        THRESHOLD_MIN = -60
         THRESHOLD_MAX = 40
 
         lidar_dist = self.lidar.get_sensor_values()[::EVERY_N].copy()
@@ -89,7 +80,7 @@ class OccupancyGrid(Grid):
         max_range = MAX_RANGE_LIDAR_SENSOR * 0.9
 
         # For empty zones
-        # points_x and point_y contain the border of detected empty zone
+        # points_x and point_y contains the border of detected empty zone
         # We use a value a little bit less than LIDAR_DIST_CLIP because of the noise in lidar
         lidar_dist_empty = np.maximum(lidar_dist - LIDAR_DIST_CLIP, 0.0)
         # All values of lidar_dist_empty_clip are now <= max_range
@@ -117,14 +108,14 @@ class OccupancyGrid(Grid):
         # threshold values
         self.grid = np.clip(self.grid, THRESHOLD_MIN, THRESHOLD_MAX)
 
-        # Ensure positive values stay positive
-        self.grid[self.grid > 0] = THRESHOLD_MAX  # Set positive values to the maximum threshold
-
         # compute zoomed grid for displaying
         self.zoomed_grid = self.grid.copy()
         new_zoomed_size = (int(self.size_area_world[1] * 0.5), int(self.size_area_world[0] * 0.5))
         self.zoomed_grid = cv2.resize(self.zoomed_grid, new_zoomed_size, interpolation=cv2.INTER_NEAREST)
 
+
+counter = 0
+path = []
 
 class MyDroneExplore(DroneAbstract):
     class Activity(Enum):
@@ -161,11 +152,12 @@ class MyDroneExplore(DroneAbstract):
                                   resolution=resolution,
                                   lidar=self.lidar())
 
+        self.bonusOccupancyGrid = OccupancyGrid(size_area_world=self.size_area,
+                                  resolution=resolution,
+                                  lidar=self.lidar())
+
         self.astarPathFound = False
         self.astarPath = []
-        self.explorationPath = []
-
-        self.goingBackwards = 0
 
     def define_message_for_all(self):
         """
@@ -174,15 +166,36 @@ class MyDroneExplore(DroneAbstract):
         pass
 
     def control(self):
-        #time.sleep(0.01)
         global counter, path
+        self.occupancyGrid.update_grid(pose=self.estimated_pose)
+        self.bonusOccupancyGrid.update_grid(pose=self.estimated_pose)
+        if counter % 5 == 0:
+            self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
+            #self.occupancyGrid.display(self.occupancyGrid.grid, self.estimated_pose, title="occupancy grid")
+            #self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
+            self.bonusOccupancyGrid.display(self.bonusOccupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed bonusOccupancy grid")
+        
         counter += 1
         print(counter)
         self.estimated_pose = Pose(np.asarray(self.measured_gps_position()), self.measured_compass_angle())
-        #print(self.estimated_pose.position)
-        #print(self.estimated_pose.orientation)
+        print(self.estimated_pose.position)
+        print(self.estimated_pose.orientation)
 
         self.occupancyGrid.update_grid(pose=self.estimated_pose)
+
+        self.bonusOccupancyGrid.grid = self.occupancyGrid.grid.copy()
+
+        self.bonusOccupancyGrid.grid[self.bonusOccupancyGrid.grid > 20] = 40
+
+        # Iterate over the grid to find squares within 4 squares of a 40
+        for i in range(self.bonusOccupancyGrid.grid.shape[0]):
+            for j in range(self.bonusOccupancyGrid.grid.shape[1]):
+                if self.bonusOccupancyGrid.grid[i, j] == 40:
+                    # Set squares within 4 squares of a 40 to 30
+                    for x in range(max(0, i - 4), min(self.bonusOccupancyGrid.grid.shape[0], i + 5)):
+                        for y in range(max(0, j - 4), min(self.bonusOccupancyGrid.grid.shape[1], j + 5)):
+                            self.bonusOccupancyGrid.grid[x, y] = 30
+
         #print(self.occupancyGrid.grid)
 
         self.getImbalanceList()
@@ -237,70 +250,13 @@ class MyDroneExplore(DroneAbstract):
         # COMMANDS FOR EACH STATE
         # Searching randomly, but when a rescue center or wounded person is detected, we use a special command
         ##########
-
-        if counter % 5 == 0:
-            #self.occupancyGrid.display(self.occupancyGrid.grid, self.estimated_pose, title="occupancy grid")
-            self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
-        
-        collided = self.process_lidar_sensor()
-        if collided and self.goingBackwards == 0:
-            self.goingBackwards = 10
-
-        if self.goingBackwards > 0:
-            self.goingBackwards -= 1
-            command = {}
-            command["forward"] = -1
-            return(command)
-
         if self.state is self.Activity.SEARCHING_WOUNDED:
             command = self.control_random()
             command["forward"] = command["forward"] * 0.75 - components[0] / 4
             command["lateral"] = command["lateral"] * 0.75 - components[1] / 4
             command["rotation"] = command["rotation"] * 0.75 + turningComponent * 0.25
             command["grasper"] = 0
-            #path.append(self.estimated_pose.position)
-            if counter % 100 == 1:
-                """
-                start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                self.explorationPath = findClosestEmpty(self.occupancyGrid.grid, start)
-                print(self.estimated_pose.position)
-                for i in range(len(self.explorationPath)):
-                    self.explorationPath[i] = self.occupancyGrid._conv_grid_to_world(self.explorationPath[i][0], self.explorationPath[i][1])
-
-                print(self.explorationPath)
-                """
-
-                """
-                betterGrid = np.sign(self.occupancyGrid.grid)
-                start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                goal = find_closest_zero(betterGrid, start)
-                self.bstarGrid = (self.occupancyGrid.grid < 10)
-                G = nx.grid_2d_graph(*self.bstarGrid.shape)
-                self.explorationPath = astar(G, start, goal)
-                """
-                
-                self.astarGrid = (self.occupancyGrid.grid < 10)
-                G = nx.grid_2d_graph(*self.astarGrid.shape)
-                start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                
-                goal = tuple(find_closest_zero(self.occupancyGrid, start))
-                print(goal)
-                #self.occupancyGrid.grid[goal[0]][goal[1]] = 40
-                #timeFirst = time.time()
-                self.explorationPath = astar(G, start, goal)
-                print(self.explorationPath)
-                for i in range(len(self.explorationPath)):
-                    self.occupancyGrid.grid[self.explorationPath[i][0]][self.explorationPath[i][1]] = 20
-                    self.explorationPath[i] = self.occupancyGrid._conv_grid_to_world(self.explorationPath[i][0], self.explorationPath[i][1])
-            
-
-            if counter > 40:
-                    while self.explorationPath != [] and abs(self.explorationPath[-1][0] - self.estimated_pose.position[0]) < 5 and abs(self.explorationPath[-1][1] - self.estimated_pose.position[1]) < 5:
-                        self.explorationPath.pop(-1) 
-                    if self.explorationPath != []:
-                        command = self.goToPlace(self.explorationPath[-1])
-            command["grasper"] = 0
-            return command
+            path.append(self.estimated_pose.position)
 
         elif self.state is self.Activity.GRASPING_WOUNDED:
             command = command_semantic
@@ -313,20 +269,21 @@ class MyDroneExplore(DroneAbstract):
             #command["lateral"] = command["lateral"] * 0.75 - components[1] / 4
             #command["rotation"] = command["rotation"] * 0.75 + turningComponent * 0.25
             if not self.astarPathFound:
-                self.astarPathFound = True
+                self.astarPathFound
                 self.astarGrid = (self.occupancyGrid.grid < 10)
+
+                print("\n\n\n\n\n\n\n\n\n\n" ,len(self.occupancyGrid.grid))
                 G = nx.grid_2d_graph(*self.astarGrid.shape)
                 start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
                 goal = self.occupancyGrid._conv_world_to_grid(int(path[0][0]), int(path[0][1]))
-
-                #timeFirst = time.time()
                 self.astarPath = astar(G, start, goal)
-                #print(time.time() - timeFirst)
                 for i in range(len(self.astarPath)):
+                    self.occupancyGrid.grid[self.astarPath[i][0]][self.astarPath[i][1]] = -60
                     self.astarPath[i] = self.occupancyGrid._conv_grid_to_world(self.astarPath[i][0], self.astarPath[i][1])
             while abs(self.astarPath[-1][0] - self.estimated_pose.position[0]) < 40 and abs(self.astarPath[-1][1] - self.estimated_pose.position[1]) < 40:
                 self.astarPath.pop(-1) 
             command = self.goToPlace(self.astarPath[-1])
+            print(self.astarPath)
             command["grasper"] = 1
             return command
 
@@ -579,142 +536,8 @@ def reconstruct_path(came_from, start, goal):
 
     return path[::-1]
 
-def findExplorationGoal(grid, start):
-    matrix = np.sign(grid)
-    G = nx.grid_2d_graph(*matrix.shape)
-    for (i, j), value in np.ndenumerate(matrix):
-        if value == 0:
-            G.nodes[(i, j)]['is_goal'] = True  # Mark 0 as a potential goal
-        elif value == -1:
-            for neighbor in [(i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)]:
-                if 0 <= neighbor[0] < matrix.shape[0] and 0 <= neighbor[1] < matrix.shape[1]:
-                    G.add_edge((i, j), neighbor, weight=2)  # Adjust weight for -1 values
-    return (astar_with_obstacles(G,start))
 
 
-def astar_with_obstacles(graph, start):
-    def heuristic(node, goal):
-        return euclidean(node, goal)
-
-    open_set = [(0, start)]
-    came_from = {}
-    cost_so_far = {start: 0}
-
-    while open_set:
-        current_cost, current_node = heappop(open_set)
-
-        if graph.nodes[current_node].get('is_goal', False):
-            path = reconstruct_path(came_from, start, current_node)
-            return path
-
-        for neighbor in graph.neighbors(current_node):
-            new_cost = cost_so_far[current_node] + graph[neighbor].get('weight', 1)
-
-            if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
-                cost_so_far[neighbor] = new_cost
-                priority = new_cost + heuristic(neighbor, start)
-                heappush(open_set, (priority, neighbor))
-                came_from[neighbor] = current_node
-
-    return None
-
-def astar_to_square(graph, start):
-    def heuristic(node, goal, wall_penalty_distance=40):
-        # Custom heuristic to evaluate distance to the center of a 3x3 square
-        goal_center = ((goal[0] - 1) // 20 * 20 + 1, (goal[1] - 1) // 20 * 20 + 1)
-        
-        # Calculate distance to goal center
-        distance_to_goal = euclidean(node, goal_center)
-        
-        # Check if the goal is close to a wall (1 value)
-        if any(graph[i, j] == 1 for i in range(goal[0] - 2, goal[0] + 3) for j in range(goal[1] - 2, goal[1] + 3)):
-            # Give a huge penalty if close to a wall
-            return distance_to_goal + wall_penalty_distance
-        else:
-            return distance_to_goal
-
-    open_set = [(0, start)]
-    came_from = {}
-    cost_so_far = {start: 0}
-
-    while open_set:
-        current_cost, current_node = heappop(open_set)
-
-        if graph.nodes[current_node].get('is_goal', False):
-            path = reconstruct_path(came_from, start, current_node)
-            return path
-
-        for neighbor in graph.neighbors(current_node):
-            new_cost = cost_so_far[current_node] + graph[neighbor].get('weight', 1)
-
-            if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
-                cost_so_far[neighbor] = new_cost
-                priority = new_cost + heuristic(neighbor, start)
-                heappush(open_set, (priority, neighbor))
-                came_from[neighbor] = current_node
-
-    return None
-
-
-def findClosestEmpty(grid, start):
-    matrix = np.sign(grid)
-    graph = {defaultdict(list)}
-
-    rows, cols = matrix.shape
-
-    for i in range(rows):
-        for j in range(cols):
-            if matrix[i, j] != 0:
-                neighbors = []
-
-                if i - 1 >= 0 and matrix[i - 1, j] == -1:
-                    neighbors.append((i - 1, j))
-                if i + 1 < rows and matrix[i + 1, j] == -1:
-                    neighbors.append((i + 1, j))
-                if j - 1 >= 0 and matrix[i, j - 1] == -1:
-                    neighbors.append((i, j - 1))
-                if j + 1 < cols and matrix[i, j + 1] == -1:
-                    neighbors.append((i, j + 1))
-
-                graph[(i, j)] = neighbors
-
-    return find_closest_goal(dict(graph), start)
-
-def find_closest_goal(graph, start):
-    queue = deque([(start, 0)])  # (node, distance)
-    visited = set()
-
-    while queue:
-        current_node, distance = queue.popleft()
-
-        if current_node in visited:
-            continue
-
-        visited.add(current_node)
-
-        if graph[current_node] == 'goal':
-            return current_node, distance
-
-        for neighbor in graph[current_node]:
-            if neighbor not in visited:
-                queue.append((neighbor, distance + 1))
-
-    return None  # No goal node found
-
-def find_closest_zero(griddy, start_coord):
-    # Create an array of coordinates for all zeros in the grid
-    zero_coords = np.argwhere(griddy.grid == 0)
-
-    # Calculate Euclidean distances from the start_coord to all zero coordinates
-    distances = np.linalg.norm(zero_coords - start_coord, axis=1)
-
-    # Find the index of the minimum distance
-    min_distance_index = np.argmin(distances)
-
-    # Get the coordinates of the closest zero
-    closest_zero_coord = zero_coords[min_distance_index]
-
-    return closest_zero_coord
 
 class MyMapSemantic(MapAbstract):
     def __init__(self):
