@@ -3,6 +3,7 @@ This program can be launched directly.
 Example of how to use semantic sensor, grasping and dropping
 """
 
+import time
 import os
 import sys
 import random
@@ -56,57 +57,58 @@ class OccupancyGrid(Grid):
         self.grid = np.zeros((self.x_max_grid, self.y_max_grid))
         self.zoomed_grid = np.empty((self.x_max_grid, self.y_max_grid))
 
-    def update_grid(self, pose: Pose):
+    def update_grid(self, pose: Pose, reallyUpdate = True):
         """
         Bayesian map update with new observation
         lidar : lidar data
         pose : corrected pose in world coordinates
         """
-        EVERY_N = 3
-        LIDAR_DIST_CLIP = 40.0
-        EMPTY_ZONE_VALUE = -0.602
-        OBSTACLE_ZONE_VALUE = 2.0
-        FREE_ZONE_VALUE = -4.0
-        THRESHOLD_MIN = -60
-        THRESHOLD_MAX = 40
+        if reallyUpdate:
+            EVERY_N = 3
+            LIDAR_DIST_CLIP = 40.0
+            EMPTY_ZONE_VALUE = -0.602
+            OBSTACLE_ZONE_VALUE = 2.0
+            FREE_ZONE_VALUE = -4.0
+            THRESHOLD_MIN = -60
+            THRESHOLD_MAX = 40
 
-        lidar_dist = self.lidar.get_sensor_values()[::EVERY_N].copy()
-        lidar_angles = self.lidar.ray_angles[::EVERY_N].copy()
+            lidar_dist = self.lidar.get_sensor_values()[::EVERY_N].copy()
+            lidar_angles = self.lidar.ray_angles[::EVERY_N].copy()
 
-        # Compute cos and sin of the absolute angle of the lidar
-        cos_rays = np.cos(lidar_angles + pose.orientation)
-        sin_rays = np.sin(lidar_angles + pose.orientation)
+            # Compute cos and sin of the absolute angle of the lidar
+            cos_rays = np.cos(lidar_angles + pose.orientation)
+            sin_rays = np.sin(lidar_angles + pose.orientation)
 
-        max_range = MAX_RANGE_LIDAR_SENSOR * 0.9
+            max_range = MAX_RANGE_LIDAR_SENSOR * 0.9
 
-        # For empty zones
-        # points_x and point_y contains the border of detected empty zone
-        # We use a value a little bit less than LIDAR_DIST_CLIP because of the noise in lidar
-        lidar_dist_empty = np.maximum(lidar_dist - LIDAR_DIST_CLIP, 0.0)
-        # All values of lidar_dist_empty_clip are now <= max_range
-        lidar_dist_empty_clip = np.minimum(lidar_dist_empty, max_range)
-        points_x = pose.position[0] + np.multiply(lidar_dist_empty_clip, cos_rays)
-        points_y = pose.position[1] + np.multiply(lidar_dist_empty_clip, sin_rays)
+            # For empty zones
+            # points_x and point_y contains the border of detected empty zone
+            # We use a value a little bit less than LIDAR_DIST_CLIP because of the noise in lidar
+            lidar_dist_empty = np.maximum(lidar_dist - LIDAR_DIST_CLIP, 0.0)
+            # All values of lidar_dist_empty_clip are now <= max_range
+            lidar_dist_empty_clip = np.minimum(lidar_dist_empty, max_range)
+            points_x = pose.position[0] + np.multiply(lidar_dist_empty_clip, cos_rays)
+            points_y = pose.position[1] + np.multiply(lidar_dist_empty_clip, sin_rays)
 
-        for pt_x, pt_y in zip(points_x, points_y):
-            self.add_value_along_line(pose.position[0], pose.position[1], pt_x, pt_y, EMPTY_ZONE_VALUE)
+            for pt_x, pt_y in zip(points_x, points_y):
+                self.add_value_along_line(pose.position[0], pose.position[1], pt_x, pt_y, EMPTY_ZONE_VALUE)
 
-        # For obstacle zones, all values of lidar_dist are < max_range
-        select_collision = lidar_dist < max_range
+            # For obstacle zones, all values of lidar_dist are < max_range
+            select_collision = lidar_dist < max_range
 
-        points_x = pose.position[0] + np.multiply(lidar_dist, cos_rays)
-        points_y = pose.position[1] + np.multiply(lidar_dist, sin_rays)
+            points_x = pose.position[0] + np.multiply(lidar_dist, cos_rays)
+            points_y = pose.position[1] + np.multiply(lidar_dist, sin_rays)
 
-        points_x = points_x[select_collision]
-        points_y = points_y[select_collision]
+            points_x = points_x[select_collision]
+            points_y = points_y[select_collision]
 
-        self.add_points(points_x, points_y, OBSTACLE_ZONE_VALUE)
+            self.add_points(points_x, points_y, OBSTACLE_ZONE_VALUE)
 
-        # the current position of the drone is free !
-        self.add_points(pose.position[0], pose.position[1], FREE_ZONE_VALUE)
+            # the current position of the drone is free !
+            self.add_points(pose.position[0], pose.position[1], FREE_ZONE_VALUE)
 
-        # threshold values
-        self.grid = np.clip(self.grid, THRESHOLD_MIN, THRESHOLD_MAX)
+            # threshold values
+            self.grid = np.clip(self.grid, THRESHOLD_MIN, THRESHOLD_MAX)
 
         # compute zoomed grid for displaying
         self.zoomed_grid = self.grid.copy()
@@ -143,6 +145,8 @@ class MyDroneExplore(DroneAbstract):
         self.isTurning = False
         self.tryingToFace = False
 
+        self.goingBackwards = False
+
         self.iteration: int = 0
 
         self.estimated_pose = Pose()
@@ -155,9 +159,20 @@ class MyDroneExplore(DroneAbstract):
         self.bonusOccupancyGrid = OccupancyGrid(size_area_world=self.size_area,
                                   resolution=resolution,
                                   lidar=self.lidar())
+    
+        self.binaryGrid = OccupancyGrid(size_area_world=self.size_area,
+                                  resolution=resolution,
+                                  lidar=self.lidar())
+
+        self.binaryClone = OccupancyGrid(size_area_world=self.size_area,
+                                  resolution=resolution,
+                                  lidar=self.lidar())
 
         self.astarPathFound = False
         self.astarPath = []
+        self.explorePath = []
+        self.bonusOccupancyGrid.update_grid(pose=self.estimated_pose)
+        
 
     def define_message_for_all(self):
         """
@@ -167,25 +182,42 @@ class MyDroneExplore(DroneAbstract):
 
     def control(self):
         global counter, path
+        if counter == 0:
+            self.occupancyGrid.update_grid(pose=self.estimated_pose)
+            self.bonusOccupancyGrid.grid = self.occupancyGrid.grid.copy()
+        self.estimated_pose = Pose(np.asarray(self.measured_gps_position()), self.measured_compass_angle())
+        #time.sleep(0.1)
         self.occupancyGrid.update_grid(pose=self.estimated_pose)
-        self.bonusOccupancyGrid.update_grid(pose=self.estimated_pose)
+        self.binaryGrid.update_grid(pose=self.estimated_pose)
+        self.binaryClone.update_grid(pose=self.estimated_pose)
+        
         if counter % 5 == 0:
             self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
             #self.occupancyGrid.display(self.occupancyGrid.grid, self.estimated_pose, title="occupancy grid")
             #self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
-            self.bonusOccupancyGrid.display(self.bonusOccupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed bonusOccupancy grid")
-        
+            
         counter += 1
         print(counter)
-        self.estimated_pose = Pose(np.asarray(self.measured_gps_position()), self.measured_compass_angle())
-        print(self.estimated_pose.position)
-        print(self.estimated_pose.orientation)
+        #print(self.estimated_pose.position)
+        #print(self.estimated_pose.orientation)
 
         self.occupancyGrid.update_grid(pose=self.estimated_pose)
 
+        
         self.bonusOccupancyGrid.grid = self.occupancyGrid.grid.copy()
+        rows, cols = self.bonusOccupancyGrid.grid.shape
+        for i in range(rows):
+            for j in range(cols):
+                if self.occupancyGrid.grid[i, j] > 20:
+                    self.bonusOccupancyGrid.grid[i, j] = 40
+                
 
         self.bonusOccupancyGrid.grid[self.bonusOccupancyGrid.grid > 20] = 40
+
+        self.bonusOccupancyGrid.display(self.bonusOccupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed bonusOccupancy grid")
+
+        self.bonusOccupancyGrid.update_grid(pose=self.estimated_pose, reallyUpdate= False)
+        
 
         # Iterate over the grid to find squares within 4 squares of a 40
         for i in range(self.bonusOccupancyGrid.grid.shape[0]):
@@ -196,7 +228,8 @@ class MyDroneExplore(DroneAbstract):
                         for y in range(max(0, j - 4), min(self.bonusOccupancyGrid.grid.shape[1], j + 5)):
                             self.bonusOccupancyGrid.grid[x, y] = 30
 
-        #print(self.occupancyGrid.grid)
+        #print(self.occupancyGrid.grid[0][0])
+        #print(self.bonusOccupancyGrid.grid[0][0])
 
         self.getImbalanceList()
         if max(self.imbalanceList) > 30:
@@ -258,36 +291,123 @@ class MyDroneExplore(DroneAbstract):
             command["grasper"] = 0
             path.append(self.estimated_pose.position)
 
+            #if counter == 1:
+            #    self.binaryGrid.grid = self.occupancyGrid.grid.copy()
+
+            self.binaryGrid.grid[self.bonusOccupancyGrid.grid < 0] = -1
+            self.binaryGrid.grid[self.bonusOccupancyGrid.grid > 0] = 1
+
+            rows, cols = self.binaryGrid.grid.shape
+            for i in range(rows):
+                for j in range(cols):
+                    if self.bonusOccupancyGrid.grid[i, j] <     0 and self.binaryGrid.grid[i, j] != 1:
+                        self.binaryGrid.grid[i, j] = -1
+                    if self.bonusOccupancyGrid.grid[i, j] == 40:
+                        self.binaryGrid.grid[i, j] = 1
+
+            self.binaryGrid.display(self.binaryGrid.zoomed_grid, self.estimated_pose, title="zoomed binary grid")
+            #print(np.unique(self.binaryGrid.grid))
+            self.binaryClone.display(self.binaryClone.zoomed_grid, self.estimated_pose, title="zoomed binary clone")
+            
+        
+            start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
+            
+            """
+            
+            if self.binaryGrid.grid[start[0]][start[1]] == 1 and self.goingBackwards == 0:
+                self.goingBackwards = 10
+
+            if self.goingBackwards > 0:
+                self.goingBackwards -= 1
+                command = {}
+                command["forward"] = -1
+                return(command)
+            """
+
+            if self.explorePath == [] or counter % 25 == 0:
+                print('recalculating')
+                start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
+                self.explorePath = myBrutePather(start, self.binaryGrid.grid)
+                self.binaryClone.grid = self.binaryGrid.grid.copy()
+                for x in self.explorePath:
+                    self.binaryClone.grid[x[0]][x[1]] = -40
+                for i in range(len(self.explorePath)):
+                    self.explorePath[i] = self.occupancyGrid._conv_grid_to_world(self.explorePath[i][0], self.explorePath[i][1])
+                
+                print(self.estimated_pose.position)
+                print(self.explorePath)
+            
+
+            if counter > 40:
+                while self.explorePath != [] and abs(self.explorePath[0][0] - self.estimated_pose.position[0]) < 10 and abs(self.explorePath[0][1] - self.estimated_pose.position[1]) < 10:
+                    self.explorePath.pop(0) 
+                if self.explorePath != []:
+                    command = self.slideToPlace(self.explorePath[0])
+            command["grasper"] = 0
+            return command
+
         elif self.state is self.Activity.GRASPING_WOUNDED:
             command = command_semantic
             command["grasper"] = 1
             path.append(self.estimated_pose.position)
 
         elif self.state is self.Activity.SEARCHING_RESCUE_CENTER:
+            goal = self.occupancyGrid._conv_world_to_grid(int(path[0][0]), int(path[0][1]))
             #command = self.control_random()
             #command["forward"] = command["forward"] * 0.75 - components[0] / 4
             #command["lateral"] = command["lateral"] * 0.75 - components[1] / 4
             #command["rotation"] = command["rotation"] * 0.75 + turningComponent * 0.25
-            if not self.astarPathFound:
-                self.astarPathFound
-                self.astarGrid = (self.occupancyGrid.grid < 10)
+            #print(self.astarPath)
+            self.binaryGrid.grid[self.bonusOccupancyGrid.grid < 0] = -1
+            self.binaryGrid.grid[self.bonusOccupancyGrid.grid > 0] = 1
 
-                print("\n\n\n\n\n\n\n\n\n\n" ,len(self.occupancyGrid.grid))
-                G = nx.grid_2d_graph(*self.astarGrid.shape)
+            rows, cols = self.binaryGrid.grid.shape
+            for i in range(rows):
+                for j in range(cols):
+                    if self.bonusOccupancyGrid.grid[i, j] <     0 and self.binaryGrid.grid[i, j] != 1:
+                        self.binaryGrid.grid[i, j] = -1
+                    if self.bonusOccupancyGrid.grid[i, j] == 40:
+                        self.binaryGrid.grid[i, j] = 1
+
+            self.binaryGrid.display(self.binaryGrid.zoomed_grid, self.estimated_pose, title="zoomed binary grid")
+            #print(np.unique(self.binaryGrid.grid))
+            self.binaryClone.display(self.binaryClone.zoomed_grid, self.estimated_pose, title="zoomed binary clone")
+            
+        
+            start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
+            
+
+            """
+            if self.binaryGrid.grid[start[0]][start[1]] == 1 and self.goingBackwards == 0:
+                self.goingBackwards = 10
+
+            if self.goingBackwards > 0:
+                self.goingBackwards -= 1
+                command = {}
+                command["forward"] = -1
+                return(command)
+            """
+
+            if self.explorePath == [] or counter % 25 == 0:
+                print('recalculating')
                 start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                goal = self.occupancyGrid._conv_world_to_grid(int(path[0][0]), int(path[0][1]))
-                self.astarPath = astar(G, start, goal)
-                for i in range(len(self.astarPath)):
-                    self.occupancyGrid.grid[self.astarPath[i][0]][self.astarPath[i][1]] = -60
-                    self.astarPath[i] = self.occupancyGrid._conv_grid_to_world(self.astarPath[i][0], self.astarPath[i][1])
-            while abs(self.astarPath[-1][0] - self.estimated_pose.position[0]) < 40 and abs(self.astarPath[-1][1] - self.estimated_pose.position[1]) < 40:
-                self.astarPath.pop(-1) 
-            command = self.goToPlace(self.astarPath[-1])
-            print(self.astarPath)
+                self.explorePath = myBruteGoTo(start, self.binaryGrid.grid,goal)
+                self.binaryClone.grid = self.binaryGrid.grid.copy()
+                for x in self.explorePath:
+                    self.binaryClone.grid[x[0]][x[1]] = -40
+                for i in range(len(self.explorePath)):
+                    self.explorePath[i] = self.occupancyGrid._conv_grid_to_world(self.explorePath[i][0], self.explorePath[i][1])
+                
+                print(self.estimated_pose.position)
+                print(self.explorePath)
+            
+
+            if counter > 40:
+                while self.explorePath != [] and abs(self.explorePath[0][0] - self.estimated_pose.position[0]) < 10 and abs(self.explorePath[0][1] - self.estimated_pose.position[1]) < 10:
+                    self.explorePath.pop(0) 
+                if self.explorePath != []:
+                    command = self.slideToPlace(self.explorePath[0])
             command["grasper"] = 1
-            return command
-
-
             return command
 
         elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
@@ -448,6 +568,35 @@ class MyDroneExplore(DroneAbstract):
             command["grasper"] = 1
         return(command)
 
+    def slideToPlace(self, place):
+        x1 = self.estimated_pose.position[0]
+        y1 = self.estimated_pose.position[1]
+        x2 = place[0]
+        y2 = place[1]
+        #print(x1, ',',y1, " and ",x2, ',',y2)
+
+        distance = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+        if distance > 100:
+            coeff = 1
+        elif distance < 0:
+            coeff = 0.2
+        else:
+            # Linear scaling between 0.2 and 1 for distances between 0 and 1000
+            coeff = 0.2 + 0.8 * (distance / 100)
+
+        coeff = 1
+        # Calculate angle
+        angle = math.atan2(y2 - y1, x2 - x1)
+
+        command = {}
+        # Calculate forward and lateral components
+        command["forward"] = math.cos(angle - self.estimated_pose.orientation) * coeff
+        command["lateral"] = math.sin(angle - self.estimated_pose.orientation) * coeff
+        return(command)
+
+
+
     def goToPlace(self, place):
         """
         According to his state in the state machine, the Drone will move towards a wound person or the rescue center
@@ -536,6 +685,143 @@ def reconstruct_path(came_from, start, goal):
 
     return path[::-1]
 
+def myBrutePather(start, grid):
+    graph = {}
+    m = len(grid)
+    n = len(grid[0])
+# Iterate through the grid
+    for i in range(m):
+        for j in range(n):
+            value = grid[i][j]
+            # If the value is -1, create edges to adjacent -1s and 0s
+            if value == -1 or value == 1:
+                neighbors = []
+
+                # Check left neighbor
+                if j > 0 and grid[i][j - 1] in (-1, 0):
+                    neighbors.append((i, j - 1))
+
+                # Check right neighbor
+                if j < n - 1 and grid[i][j + 1] in (-1, 0):
+                    neighbors.append((i, j + 1))
+
+                # Check upper neighbor
+                if i > 0 and grid[i - 1][j] in (-1, 0):
+                    neighbors.append((i - 1, j))
+
+                # Check lower neighbor
+                if i < m - 1 and grid[i + 1][j] in (-1, 0):
+                    neighbors.append((i + 1, j))
+
+                # Add edges to the graph
+                graph[(i, j)] = neighbors
+
+            # If the value is 0, mark it as a goal node
+            elif value == 0:
+                # You can create a special node for goal nodes or mark it as needed
+                graph[(i, j)] = "Goal Node"
+    
+
+    theSet = {start: start}
+    notFound = True
+#print(graph)
+    counter = n*m
+    while notFound and counter > 0:
+        #print(counter)
+        counter -= 1
+        newSet = {}
+        for coords, predecessor in theSet.items():
+            #print(coords)
+            #print(grid[coords[0]][coords[1]])
+            if graph[coords] == "Goal Node":
+                goal = coords
+                notFound = False
+                break
+            else : 
+                for x in graph[coords]:
+                    if not x in theSet:
+                        newSet[x] = coords
+        theSet.update(newSet)
+    
+    if notFound:
+        return []
+    else:
+        path = [goal]
+        #print(start)
+        while path[-1] != start:
+            #print(path[-1])
+            path.append(theSet[path[-1]])
+        path.reverse()
+    return path
+
+def myBruteGoTo(start, grid, end):
+    graph = {}
+    m = len(grid)
+    n = len(grid[0])
+# Iterate through the grid
+    for i in range(m):
+        for j in range(n):
+            value = grid[i][j]
+            # If the value is -1, create edges to adjacent -1s and 0s
+            if value == -1 or value == 1:
+                neighbors = []
+
+                # Check left neighbor
+                if j > 0 and grid[i][j - 1] in (-1, 0):
+                    neighbors.append((i, j - 1))
+
+                # Check right neighbor
+                if j < n - 1 and grid[i][j + 1] in (-1, 0):
+                    neighbors.append((i, j + 1))
+
+                # Check upper neighbor
+                if i > 0 and grid[i - 1][j] in (-1, 0):
+                    neighbors.append((i - 1, j))
+
+                # Check lower neighbor
+                if i < m - 1 and grid[i + 1][j] in (-1, 0):
+                    neighbors.append((i + 1, j))
+
+                # Add edges to the graph
+                graph[(i, j)] = neighbors
+
+            # If the value is 0, mark it as a goal node
+            #elif value == 0:
+                # You can create a special node for goal nodes or mark it as needed
+                
+    graph[(end[0], end[1])] = "Goal Node"
+    
+    theSet = {start: start}
+    notFound = True
+#print(graph)
+    counter = n*m
+    while notFound and counter > 0:
+        #print(counter)
+        counter -= 1
+        newSet = {}
+        for coords, predecessor in theSet.items():
+            #print(coords)
+            #print(grid[coords[0]][coords[1]])
+            if graph[coords] == "Goal Node":
+                goal = coords
+                notFound = False
+                break
+            else : 
+                for x in graph[coords]:
+                    if not x in theSet:
+                        newSet[x] = coords
+        theSet.update(newSet)
+    
+    if notFound:
+        return []
+    else:
+        path = [goal]
+        #print(start)
+        while path[-1] != start:
+            #print(path[-1])
+            path.append(theSet[path[-1]])
+        path.reverse()
+    return path
 
 
 
