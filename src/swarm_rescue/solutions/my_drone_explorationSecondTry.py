@@ -758,12 +758,14 @@ def myBruteGoTo(start, grid, end):
     graph = {}
     m = len(grid)
     n = len(grid[0])
+    #print("n et m : ", n, m)
+    #print(grid)
 # Iterate through the grid
     for i in range(m):
         for j in range(n):
             value = grid[i][j]
             # If the value is -1, create edges to adjacent -1s and 0s
-            if value == -1 or value == 1:
+            if abs(value) == 1 :
                 neighbors = []
 
                 # Check left neighbor
@@ -790,6 +792,7 @@ def myBruteGoTo(start, grid, end):
                 # You can create a special node for goal nodes or mark it as needed
                 
     graph[(end[0], end[1])] = "Goal Node"
+    #print(end[0],end[1])
     
     theSet = {start: start}
     notFound = True
@@ -802,14 +805,15 @@ def myBruteGoTo(start, grid, end):
         for coords, predecessor in theSet.items():
             #print(coords)
             #print(grid[coords[0]][coords[1]])
-            if graph[coords] == "Goal Node":
-                goal = coords
-                notFound = False
-                break
-            else : 
-                for x in graph[coords]:
-                    if not x in theSet:
-                        newSet[x] = coords
+            if coords in graph.keys() :
+                if graph[coords] == "Goal Node":
+                    goal = coords
+                    notFound = False
+                    break
+                else : 
+                    for x in graph[coords]:
+                        if not x in theSet:
+                            newSet[x] = coords
         theSet.update(newSet)
     
     if notFound:
