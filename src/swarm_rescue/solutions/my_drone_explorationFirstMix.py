@@ -403,7 +403,7 @@ class MyDroneExploreMix(DroneAbstract):
                 if self.explorePath == [] or counter % 50 == 0:
                     print('recalculating')
                     start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                    self.explorePath = myBruteGoTo(start, self.binaryGrid.grid,goal)
+                    self.explorePath = self.astarPath
                     self.binaryClone.grid = self.binaryGrid.grid.copy()
                     for x in self.explorePath:
                         self.binaryClone.grid[x[0]][x[1]] = -40
@@ -597,8 +597,6 @@ class MyDroneExploreMix(DroneAbstract):
         command["forward"] = math.cos(angle - self.estimated_pose.orientation) * coeff
         command["lateral"] = math.sin(angle - self.estimated_pose.orientation) * coeff
         return(command)
-
-
 
     def goToPlace(self, place):
         """
