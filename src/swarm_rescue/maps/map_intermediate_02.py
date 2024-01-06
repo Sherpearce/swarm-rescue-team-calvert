@@ -32,7 +32,7 @@ class MyMapIntermediate02(MapAbstract):
         self._no_com_zone_pos = ((-159, 0), 0)
 
         self._kill_zone = KillZone(size=(68, 360))
-        self._kill_zone_pos = ((200, 0), 0)
+        self._kill_zone_pos = ((-484, 0), 0)
 
         self._wounded_persons_pos = [(-555, 188), (-420, 188), (-285, 188), (-150, 188), (-15, 188), (120, 188),
                                      (255, 188), (-555, 63), (-420, 63), (-285, 63), (-150, 63), (-15, 63), (120, 63),
@@ -42,7 +42,7 @@ class MyMapIntermediate02(MapAbstract):
         self._number_wounded_persons = len(self._wounded_persons_pos)
         self._wounded_persons: List[WoundedPerson] = []
 
-        self._number_drones = 2
+        self._number_drones = 5
         # They are positioned in a square whose side size depends on the total number of drones.
         start_area_drones = (496, 100)
         nb_per_side = math.ceil(math.sqrt(float(self._number_drones)))

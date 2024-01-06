@@ -128,21 +128,21 @@ class MyDroneExploreMix(DroneAbstract):
         GRASPING_WOUNDED = 2
         SEARCHING_RESCUE_CENTER = 3
         DROPPING_AT_RESCUE_CENTER = 4
-        SLAVE = 5
+        RESCUER = 5
 
         
 
     def __init__(self,
                  identifier: Optional[int] = None, **kwargs):
         super().__init__(identifier=identifier,
-                         display_lidar_graph=False,
+                         display_lidar_graph=True,
                          **kwargs)
         # The state is initialized to searching wounded person
-        if self.identifier == 0:
+        if self.identifier % 3 == 0:
             self.state = self.Activity.SEARCHING_WOUNDED
             self.order = ("Follow me", None)
         else:
-            self.state = self.Activity.SLAVE           
+            self.state = self.Activity.RESCUER           
         # Those values are used by the random control function
         self.counterStraight = 0
         self.angleStopTurning = 0
@@ -164,83 +164,59 @@ class MyDroneExploreMix(DroneAbstract):
                                   resolution=resolution,
                                   lidar=self.lidar())
 
-        self.bonusOccupancyGrid = OccupancyGrid(size_area_world=self.size_area,
-                                  resolution=resolution,
-                                  lidar=self.lidar())
-    
-        self.binaryGrid = OccupancyGrid(size_area_world=self.size_area,
-                                  resolution=resolution,
-                                  lidar=self.lidar())
-
-        self.binaryClone = OccupancyGrid(size_area_world=self.size_area,
-                                  resolution=resolution,
-                                  lidar=self.lidar())
-
         self.astarPathFound = False
         self.astarPath = []
         self.explorePath = []
-        self.bonusOccupancyGrid.update_grid(pose=self.estimated_pose)
         
 
     def define_message_for_all(self):
-        if self.state is self.Activity.SLAVE:
+        if self.state is self.Activity.GRASPING_WOUNDED:
+
+            found_wounded, found_rescue_center, command_semantic = self.process_semantic_sensor()
+
+            command_comm = command_semantic
+            command_comm["grasper"] = 1
+            path.append(self.estimated_pose.position)
+
+            self.order = ("Grasp", command_comm)
+        elif self.state is self.Activity.RESCUER:
             return self.identifier
-        else:
-            msg_data = (self.identifier, (self.measured_gps_position(), self.measured_compass_angle()), self.order)
+        elif self.state is self.Activity.SEARCHING_WOUNDED:
+            self.order = ("Follow me", None)
+
+        
+        if self.state is not self.Activity.RESCUER:
+            msg_data = (self.identifier, (self.measured_gps_position(), self.measured_compass_angle()), self.order, self.occupancyGrid)
             return msg_data
 
         pass
 
+    # In order to have a common grid, we need to have a common occupancy grid. To do so, we compare the value of each cell of the grid and we keep the highest value in absolute value
+
+    def merge_grid(self, grid):
+        for i in range(grid.x_max_grid):
+            for j in range(grid.y_max_grid):
+                if abs(grid[i][j]) > abs(self.occupancyGrid.grid[i][j]):
+                    self.occupancyGrid.grid[i][j] = grid[i][j]
+
     def control(self):
-        global counter, path
-        if counter == 0:
-            self.occupancyGrid.update_grid(pose=self.estimated_pose)
-            self.bonusOccupancyGrid.grid = self.occupancyGrid.grid.copy()
-        self.estimated_pose = Pose(np.asarray(self.measured_gps_position()), self.measured_compass_angle())
-        #time.sleep(0.1)
-        self.occupancyGrid.update_grid(pose=self.estimated_pose)
-        self.binaryGrid.update_grid(pose=self.estimated_pose)
-        self.binaryClone.update_grid(pose=self.estimated_pose)
-        
-        if counter % 5 == 0:
-            self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
-            #self.occupancyGrid.display(self.occupancyGrid.grid, self.estimated_pose, title="occupancy grid")
-            #self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
             
-        counter += 1
-        #print(counter)
-        #print(self.estimated_pose.position)
-        #print(self.estimated_pose.orientation)
-
-        self.occupancyGrid.update_grid(pose=self.estimated_pose)
-
-        
-        self.bonusOccupancyGrid.grid = self.occupancyGrid.grid.copy()
-        rows, cols = self.bonusOccupancyGrid.grid.shape
-        for i in range(rows):
-            for j in range(cols):
-                if self.occupancyGrid.grid[i, j] > 20:
-                    self.bonusOccupancyGrid.grid[i, j] = 40
+        if self.state is not self.Activity.RESCUER:    
+            global counter, path
+            
+            if counter == 0:
+                self.occupancyGrid.update_grid(pose=self.estimated_pose)
+            self.estimated_pose = Pose(np.asarray(self.measured_gps_position()), self.measured_compass_angle())
+            #time.sleep(0.1)
+            self.occupancyGrid.update_grid(pose=self.estimated_pose)
+            
+            if counter % 5 == 0:
+                self.occupancyGrid.display(self.occupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed occupancy grid")
                 
+            counter += 1
 
-        self.bonusOccupancyGrid.grid[self.bonusOccupancyGrid.grid > 20] = 40
-
-        self.bonusOccupancyGrid.display(self.bonusOccupancyGrid.zoomed_grid, self.estimated_pose, title="zoomed bonusOccupancy grid")
-
-        self.bonusOccupancyGrid.update_grid(pose=self.estimated_pose, reallyUpdate= False)
-        
-
-        # Iterate over the grid to find squares within 4 squares of a 40
-        for i in range(self.bonusOccupancyGrid.grid.shape[0]):
-            for j in range(self.bonusOccupancyGrid.grid.shape[1]):
-                if self.bonusOccupancyGrid.grid[i, j] == 40:
-                    # Set squares within 4 squares of a 40 to 30
-                    for x in range(max(0, i - 4), min(self.bonusOccupancyGrid.grid.shape[0], i + 5)):
-                        for y in range(max(0, j - 4), min(self.bonusOccupancyGrid.grid.shape[1], j + 5)):
-                            self.bonusOccupancyGrid.grid[x, y] = 30
-
-        #print(self.occupancyGrid.grid[0][0])
-        #print(self.bonusOccupancyGrid.grid[0][0])
+            self.occupancyGrid.update_grid(pose=self.estimated_pose)
+                
 
         self.getImbalanceList()
         if max(self.imbalanceList) > 30:
@@ -265,11 +241,11 @@ class MyDroneExploreMix(DroneAbstract):
         # TRANSITIONS OF THE STATE MACHINE
         #############
 
-        if self.state is self.Activity.SLAVE or self.alone:
-            if self.state is self.Activity.SLAVE:
+        if self.state is self.Activity.RESCUER or self.alone:
+            if self.state is self.Activity.RESCUER:
                 found_drone, command_comm = self.process_communication_sensor()
 
-            if (found_drone and self.state is self.Activity.SLAVE) or self.alone:
+            if (found_drone and self.state is self.Activity.RESCUER) or self.alone:
 
                 if self.state is self.Activity.GRASPING_WOUNDED and self.base.grasper.grasped_entities:
                     self.state = self.Activity.SEARCHING_RESCUE_CENTER
@@ -280,11 +256,11 @@ class MyDroneExploreMix(DroneAbstract):
                 elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and not self.base.grasper.grasped_entities:
                     self.state = self.Activity.SEARCHING_WOUNDED
 
-                elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and not found_rescue_center:
-                    self.state = self.Activity.SEARCHING_RESCUE_CENTER
-
                 command = command_comm
                 return command
+            
+            else :
+                pass
         
         else :
 
@@ -298,6 +274,7 @@ class MyDroneExploreMix(DroneAbstract):
             """
             ##########
             # COMMANDS FOR EACH STATE
+            # Searching randomly, but when a rescue center or wounded person is detected, we use a special command
             ##########
             if self.state is self.Activity.SEARCHING_WOUNDED:
                 command["forward"] = command["forward"] * 0.75 - components[0] / 4
@@ -305,59 +282,24 @@ class MyDroneExploreMix(DroneAbstract):
                 command["rotation"] = command["rotation"] * 0.75 + turningComponent * 0.25
                 command["grasper"] = 0
                 path.append(self.estimated_pose.position)
-
-                #if counter == 1:
-                #    self.binaryGrid.grid = self.occupancyGrid.grid.copy()
-
-                self.binaryGrid.grid[self.bonusOccupancyGrid.grid < 0] = -1
-                self.binaryGrid.grid[self.bonusOccupancyGrid.grid > 0] = 1
-
-                rows, cols = self.binaryGrid.grid.shape
-                for i in range(rows):
-                    for j in range(cols):
-                        if self.bonusOccupancyGrid.grid[i, j] < 0 and self.binaryGrid.grid[i, j] != 1:
-                            self.binaryGrid.grid[i, j] = -1
-                        if self.bonusOccupancyGrid.grid[i, j] == 40:
-                            self.binaryGrid.grid[i, j] = 1
-
-                self.binaryGrid.display(self.binaryGrid.zoomed_grid, self.estimated_pose, title="zoomed binary grid")
-                #print(np.unique(self.binaryGrid.grid))
-                self.binaryClone.display(self.binaryClone.zoomed_grid, self.estimated_pose, title="zoomed binary clone")
                 
-            
-                start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                
-                """
-                
-                if self.binaryGrid.grid[start[0]][start[1]] == 1 and self.goingBackwards == 0:
-                    self.goingBackwards = 10
+                if self.state is not self.Activity.RESCUER:
 
-                if self.goingBackwards > 0:
-                    self.goingBackwards -= 1
-                    command = {}
-                    command["forward"] = -1
-                    return(command)
-                """
-
-                if self.explorePath == [] or counter % 25 == 0:
-                    print('recalculating')
-                    start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                    self.explorePath = myBrutePather(start, self.binaryGrid.grid)
-                    self.binaryClone.grid = self.binaryGrid.grid.copy()
-                    for x in self.explorePath:
-                        self.binaryClone.grid[x[0]][x[1]] = -40
-                    for i in range(len(self.explorePath)):
-                        self.explorePath[i] = self.occupancyGrid._conv_grid_to_world(self.explorePath[i][0], self.explorePath[i][1])
-                    
-                    print(self.estimated_pose.position)
-                    print(self.explorePath)
+                    if self.explorePath == [] or counter % 25 == 0:
+                        print('recalculating')
+                        for i in range(len(self.explorePath)):
+                            self.explorePath[i] = self.occupancyGrid._conv_grid_to_world(self.explorePath[i][0], self.explorePath[i][1])
+                        
+                        print(self.estimated_pose.position)
+                        print(self.explorePath)
                 
 
-                if counter > 40:
-                    while self.explorePath != [] and abs(self.explorePath[0][0] - self.estimated_pose.position[0]) < 10 and abs(self.explorePath[0][1] - self.estimated_pose.position[1]) < 10:
-                        self.explorePath.pop(0) 
-                    if self.explorePath != []:
-                        command = self.slideToPlace(self.explorePath[0])
+                    if counter > 40:
+                        while self.explorePath != [] and abs(self.explorePath[0][0] - self.estimated_pose.position[0]) < 10 and abs(self.explorePath[0][1] - self.estimated_pose.position[1]) < 10:
+                            self.explorePath.pop(0) 
+                        if self.explorePath != []:
+                            command = self.slideToPlace(self.explorePath[0])
+
                 command["grasper"] = 0
                 return command
 
@@ -367,63 +309,7 @@ class MyDroneExploreMix(DroneAbstract):
                 path.append(self.estimated_pose.position)
 
             elif self.state is self.Activity.SEARCHING_RESCUE_CENTER:
-                goal = self.occupancyGrid._conv_world_to_grid(int(path[0][0]), int(path[0][1]))
-                #command = self.control_random()
-                #command["forward"] = command["forward"] * 0.75 - components[0] / 4
-                #command["lateral"] = command["lateral"] * 0.75 - components[1] / 4
-                #command["rotation"] = command["rotation"] * 0.75 + turningComponent * 0.25
-                #print(self.astarPath)
-                self.binaryGrid.grid[self.bonusOccupancyGrid.grid < 0] = -1
-                self.binaryGrid.grid[self.bonusOccupancyGrid.grid > 0] = 1
-
-                rows, cols = self.binaryGrid.grid.shape
-                for i in range(rows):
-                    for j in range(cols):
-                        if self.bonusOccupancyGrid.grid[i, j] < 0 and self.binaryGrid.grid[i, j] != 1:
-                            self.binaryGrid.grid[i, j] = -1
-                        if self.bonusOccupancyGrid.grid[i, j] == 40:
-                            self.binaryGrid.grid[i, j] = 1
-
-                self.binaryGrid.display(self.binaryGrid.zoomed_grid, self.estimated_pose, title="zoomed binary grid")
-                #print(np.unique(self.binaryGrid.grid))
-                self.binaryClone.display(self.binaryClone.zoomed_grid, self.estimated_pose, title="zoomed binary clone")
-                
-            
-                start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                
-
-                """
-                if self.binaryGrid.grid[start[0]][start[1]] == 1 and self.goingBackwards == 0:
-                    self.goingBackwards = 10
-
-                if self.goingBackwards > 0:
-                    self.goingBackwards -= 1
-                    command = {}
-                    command["forward"] = -1
-                    return(command)
-                """
-
-                if self.explorePath == [] or counter % 50 == 0:
-                    print('recalculating')
-                    start = self.occupancyGrid._conv_world_to_grid(int(self.estimated_pose.position[0]), int(self.estimated_pose.position[1]))
-                    self.explorePath = self.astarPath
-                    self.binaryClone.grid = self.binaryGrid.grid.copy()
-                    for x in self.explorePath:
-                        self.binaryClone.grid[x[0]][x[1]] = -40
-                    for i in range(len(self.explorePath)):
-                        self.explorePath[i] = self.occupancyGrid._conv_grid_to_world(self.explorePath[i][0], self.explorePath[i][1])
-                    
-                    print(self.estimated_pose.position)
-                    print(self.explorePath)
-                
-
-                if counter > 40:
-                    while self.explorePath != [] and abs(self.explorePath[0][0] - self.estimated_pose.position[0]) < 10 and abs(self.explorePath[0][1] - self.estimated_pose.position[1]) < 10:
-                        self.explorePath.pop(0) 
-                    if self.explorePath != []:
-                        command = self.slideToPlace(self.explorePath[0])
-                command["grasper"] = 1
-                return command
+                pass
 
             elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
                 command = command_semantic
@@ -523,42 +409,40 @@ class MyDroneExploreMix(DroneAbstract):
         command_comm = {"forward": 0.0,
                         "lateral": 0.0,
                         "rotation": 0.0}
-        
-        if self.state is self.Activity.SEARCHING_WOUNDED:
-            self.order = ("Follow me", None)
-        elif self.state is self.Activity.GRASPING_WOUNDED:
 
-            found_wounded, found_rescue_center, command_semantic = self.process_semantic_sensor()
-
-            command_comm = command_semantic
-            command_comm["grasper"] = 1
-            path.append(self.estimated_pose.position)
-
-            self.order = ("Grasp", command_comm)
-
-        elif self.state is self.Activity.SLAVE:
+        if self.state is self.Activity.RESCUER:
             if self.communicator :
                 for data in self.communicator.received_messages:
                     data = data[1]
-                    if data[0] == 0:
+
+                    #We check if data is an int
+                    if isinstance(data, int):
+                        break
+
+                    elif data[0] == 0:
                         found_drone = True
 
-                        if data[-1][0] == "Follow me":
+                        if data[-2][0] == "Follow me":
                             command_comm = self.faceCoordinates(data[1][0])
                             command_comm["grasper"] = 0
                             command_comm["forward"] = 1
+                            command_comm["lateral"] = 0
+                            command_comm["rotation"] = 0
                             xd, yd = data[1][0]
                             xs, ys = self.estimated_pose.position
                             distance = math.sqrt((xd - xs)**2 + (yd - ys)**2)
                             if distance < 100:
                                 command_comm["forward"] = -1
-                                command_comm["rotation"] = 1
+                                command_comm["rotation"] = 0
                                 command_comm["lateral"] = 1
                                 command_comm["grasper"] = 0
 
-                        elif data[-1][0] == "Grasp":
+                        elif data[-2][0] == "Grasp":
                             self.state = self.Activity.GRASPING_WOUNDED
-                            return data[-1][1]
+                            return data[-2][1]
+                    
+                    self.merge_grid(data[-1])
+                    
         return found_drone, command_comm
     
 

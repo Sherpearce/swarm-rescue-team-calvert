@@ -2,7 +2,7 @@ from solutions.my_drone_explorationSecondTry import MyDroneExplore
 from solutions.my_drone_lidar_communication import MyDroneLidarCommunication
 from examples.example_keyboard import MyDroneKeyboard
 from solutions.my_drone_Astar import MyDroneAstar
-from solutions.my_drone_explorationFirstMix import MyDroneExploreMix
+from solutions.my_drone_explorationNewMix import MyDroneExploreMix
 
-class MyDroneEval(MyDroneExploreMix):
+class MyDroneEval(MyDroneExplore):
     pass
